@@ -797,14 +797,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDeleg
         guard gesture.state == .ended else { return }
         let point = gesture.location(in: mapView)
 
-        // If the click landed on (or very near) an existing pin, let its own callout
-        // handle the click instead of treating this as a "set my location here" tap.
-        for annotation in mapView.annotations {
-            let annotationPoint = mapView.convert(annotation.coordinate, toPointTo: mapView)
-            let dx = annotationPoint.x - point.x
-            let dy = annotationPoint.y - point.y
-            if (dx * dx + dy * dy) < (22 * 22) {
-                return
+        // Ask AppKit what's actually rendered at this pixel, rather than computing
+        // annotation screen positions ourselves. If a pin (or its callout) is there,
+        // let it handle the click instead of treating this as a "set location" tap.
+        if let superview = mapView.superview {
+            let pointInSuperview = mapView.convert(point, to: superview)
+            if let hitView = mapView.hitTest(pointInSuperview) {
+                var v: NSView? = hitView
+                while let cur = v, cur !== mapView {
+                    if cur is MKAnnotationView { return }
+                    v = cur.superview
+                }
             }
         }
 
