@@ -179,6 +179,7 @@ func schemeColor(_ scheme: String) -> NSColor {
 
 func statChip(title: String, value: String) -> NSView {
     let container = NSView()
+    container.translatesAutoresizingMaskIntoConstraints = false
     container.wantsLayer = true
     container.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
     container.layer?.cornerRadius = 8
@@ -477,6 +478,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDeleg
         statChipsContainer.orientation = .horizontal
         statChipsContainer.spacing = 10
         statChipsContainer.distribution = .fillEqually
+        statChipsContainer.translatesAutoresizingMaskIntoConstraints = false
+        statChipsContainer.heightAnchor.constraint(equalToConstant: 56).isActive = true
 
         mapView = MKMapView()
         mapView.isZoomEnabled = true
