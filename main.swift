@@ -396,7 +396,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDeleg
             view.annotation = annotation
             view.markerTintColor = .systemBlue
             view.glyphImage = NSImage(systemSymbolName: "location.fill", accessibilityDescription: nil)
-            view.canShowCallout = true
+            view.canShowCallout = false
             view.displayPriority = .required
             view.collisionMode = .none
             return view
@@ -409,6 +409,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDeleg
             view.markerTintColor = repAnn.pinColor
             view.glyphImage = NSImage(systemSymbolName: "antenna.radiowaves.left.and.right", accessibilityDescription: nil)
             view.canShowCallout = false
+            // titleVisibility/subtitleVisibility default to .adaptive, which shows the
+            // title/subtitle as a plain floating label on selection - independent of, and
+            // not suppressed by, canShowCallout. Explicitly hide both since repeater pins
+            // are identified by their color-matched table row now, not by pin text.
+            view.titleVisibility = .hidden
+            view.subtitleVisibility = .hidden
             view.displayPriority = .required
             view.collisionMode = .none
             return view
