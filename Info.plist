@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>GridRadioLocator</string>
+	<key>CFBundleIdentifier</key>
+	<string>uk.g0fqb.gridradiolocator</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleName</key>
+	<string>GridRadio Locator</string>
+	<key>CFBundleDisplayName</key>
+	<string>GridRadio Locator</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSLocationUsageDescription</key>
+	<string>GridRadio Locator uses your current location to look up your Maidenhead grid square, nearest award references, and nearby repeaters via the grid.radio API.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>GridRadio Locator uses your current location to look up your Maidenhead grid square, nearest award references, and nearby repeaters via the grid.radio API.</string>
+</dict>
+</plist>
