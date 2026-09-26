@@ -41,6 +41,19 @@ func keychainSaveAPIKey(_ key: String) {
     SecItemAdd(attributes as CFDictionary, nil)
 }
 
+// MARK: - Last-known-location cache (used as a map fallback center when detection fails entirely)
+
+func saveLastCoord(_ coord: CLLocationCoordinate2D) {
+    UserDefaults.standard.set(coord.latitude, forKey: "lastLat")
+    UserDefaults.standard.set(coord.longitude, forKey: "lastLon")
+}
+
+func loadLastCoord() -> CLLocationCoordinate2D? {
+    let defaults = UserDefaults.standard
+    guard defaults.object(forKey: "lastLat") != nil, defaults.object(forKey: "lastLon") != nil else { return nil }
+    return CLLocationCoordinate2D(latitude: defaults.double(forKey: "lastLat"), longitude: defaults.double(forKey: "lastLon"))
+}
+
 // MARK: - Data models
 
 struct RefRow {
@@ -206,15 +219,23 @@ func sectionHeader(_ text: String) -> NSTextField {
 
 func refRowView(_ ref: RefRow) -> NSView {
     let tag = chip(text: ref.scheme.uppercased(), color: schemeColor(ref.scheme))
+    tag.setContentCompressionResistancePriority(.required, for: .horizontal)
+
     let name = makeLabel("\(ref.code) - \(ref.name)", size: 12)
     name.lineBreakMode = .byTruncatingTail
-    let dist = makeLabel(String(format: "%.1f km", ref.distanceKm), size: 11, color: .secondaryLabelColor)
+    name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    name.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-    let row = NSStackView(views: [tag, name, NSView(), dist])
+    let dist = makeLabel(String(format: "%.1f km", ref.distanceKm), size: 11, color: .secondaryLabelColor)
+    dist.setContentCompressionResistancePriority(.required, for: .horizontal)
+    dist.setContentHuggingPriority(.required, for: .horizontal)
+
+    let row = NSStackView(views: [tag, name, dist])
     row.orientation = .horizontal
+    row.distribution = .fill
     row.spacing = 8
     row.alignment = .centerY
-    row.setHuggingPriority(.defaultLow, for: .horizontal)
+    row.edgeInsets = NSEdgeInsets(top: 0, left: 4, bottom: 0, right: 4)
     return row
 }
 
@@ -356,6 +377,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDeleg
             view.glyphImage = NSImage(systemSymbolName: "location.fill", accessibilityDescription: nil)
             view.canShowCallout = true
             view.displayPriority = .required
+            view.collisionMode = .none
             return view
         }
         if let repAnn = annotation as? RepeaterAnnotation {
@@ -366,6 +388,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDeleg
             view.markerTintColor = statusColor(repAnn.status)
             view.glyphImage = NSImage(systemSymbolName: "antenna.radiowaves.left.and.right", accessibilityDescription: nil)
             view.canShowCallout = true
+            view.displayPriority = .required
+            view.collisionMode = .none
             return view
         }
         return nil
@@ -444,6 +468,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDeleg
         mapView.wantsLayer = true
         mapView.layer?.cornerRadius = 10
         mapView.layer?.masksToBounds = true
+
+        let mapClickGesture = NSClickGestureRecognizer(target: self, action: #selector(mapWasClicked(_:)))
+        mapView.addGestureRecognizer(mapClickGesture)
 
         refsStack = NSStackView(views: [])
         refsStack.orientation = .vertical
@@ -721,7 +748,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDeleg
             _ = semaphore.wait(timeout: .now() + 12)
 
             guard let coord = coord, !self.locationResolved else {
-                self.showError("Could not get your current location.\n\nWi-Fi/GPS positioning failed and the IP-based fallback also failed (or you have no internet connection).\n\nCheck System Settings -> Privacy & Security -> Location Services and allow \"GridRadio Locator\", or try again later.")
+                DispatchQueue.main.async {
+                    self.showMapFallback(reason: "Could not get your location automatically (no Wi-Fi/GPS fix, and IP-based lookup failed too). Click anywhere on the map below to set your position, or use \"Edit Location...\".")
+                }
                 return
             }
             self.locationResolved = true
@@ -737,6 +766,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDeleg
             self.statusLabel.maximumNumberOfLines = 0
             self.statusLabel.preferredMaxLayoutWidth = 380
         }
+    }
+
+    /// Shown when automatic location detection fails entirely. Rather than a dead-end error,
+    /// this puts up the normal content view with an empty report and a clickable map
+    /// (centered on the last known position, if any) so the user can tap their location in directly.
+    func showMapFallback(reason: String) {
+        spinner.stopAnimation(nil)
+        loadingView.isHidden = true
+        contentView.isHidden = false
+
+        headerLocator.stringValue = "Location unknown"
+        headerCoord.stringValue = reason
+        headerCoord.textColor = .systemOrange
+        headerCoord.maximumNumberOfLines = 0
+
+        statChipsContainer.subviews.forEach { $0.removeFromSuperview() }
+        refsStack.subviews.forEach { $0.removeFromSuperview() }
+        refsStack.addView(makeLabel("Set a location to see nearby references.", size: 12, color: .secondaryLabelColor), in: .leading)
+        tableSource.rows = []
+        tableView.reloadData()
+
+        mapView.removeAnnotations(mapView.annotations)
+        let center = loadLastCoord() ?? CLLocationCoordinate2D(latitude: 54.5, longitude: -3.5)
+        let span: CLLocationDistance = loadLastCoord() != nil ? 30000 : 900000
+        mapView.setRegion(MKCoordinateRegion(center: center, latitudinalMeters: span, longitudinalMeters: span), animated: false)
+    }
+
+    @objc func mapWasClicked(_ gesture: NSClickGestureRecognizer) {
+        guard gesture.state == .ended else { return }
+        let point = gesture.location(in: mapView)
+
+        // If the click landed on (or very near) an existing pin, let its own callout
+        // handle the click instead of treating this as a "set my location here" tap.
+        for annotation in mapView.annotations {
+            let annotationPoint = mapView.convert(annotation.coordinate, toPointTo: mapView)
+            let dx = annotationPoint.x - point.x
+            let dy = annotationPoint.y - point.y
+            if (dx * dx + dy * dy) < (22 * 22) {
+                return
+            }
+        }
+
+        let coord = mapView.convert(point, toCoordinateFrom: mapView)
+
+        locationManager.stopUpdatingLocation()
+        locationResolved = true
+
+        contentView.isHidden = true
+        loadingView.isHidden = false
+        statusLabel.stringValue = "Fetching grid.radio data..."
+        spinner.startAnimation(nil)
+
+        loadData(for: coord, sourceLabel: "Manual entry (map click)")
     }
 
     // MARK: Data loading
@@ -807,7 +889,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDeleg
                         lon: coords[0]
                     ))
                 }
-                repeaterRows.sort { $0.callsign < $1.callsign }
+                let here = CLLocation(latitude: lat, longitude: lon)
+                repeaterRows.sort {
+                    let d1 = CLLocation(latitude: $0.lat, longitude: $0.lon).distance(from: here)
+                    let d2 = CLLocation(latitude: $1.lat, longitude: $1.lon).distance(from: here)
+                    return d1 < d2
+                }
             }
 
             DispatchQueue.main.async {
@@ -821,6 +908,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDeleg
     }
 
     func populate(coord: CLLocationCoordinate2D, maidenhead: String, cqZone: String, ituZone: String, region: String, gridRef: String, wabSquare: String, refs: [RefRow], repeaters: [RepeaterRow], sourceLabel: String) {
+        saveLastCoord(coord)
         headerLocator.stringValue = maidenhead
         headerCoord.stringValue = String(format: "%.5f, %.5f   OS: %@   source: %@", coord.latitude, coord.longitude, gridRef, sourceLabel)
         headerCoord.textColor = (sourceLabel == "GPS/Wi-Fi") ? .secondaryLabelColor : .systemOrange
