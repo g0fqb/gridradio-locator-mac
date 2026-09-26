@@ -79,6 +79,37 @@ final class RepeaterAnnotation: MKPointAnnotation {
     var status: String = ""
 }
 
+/// A small flat dot marker, used instead of the tall balloon-style MKMarkerAnnotationView
+/// for repeaters. Balloon markers have real height above their anchor point, which is what
+/// buries a neighboring pin's callout when many repeaters are packed close together; a flat
+/// dot has almost no footprint, so that overlap is far less likely regardless of z-order.
+final class DotAnnotationView: MKAnnotationView {
+    var dotColor: NSColor = .systemGray {
+        didSet { needsDisplay = true }
+    }
+
+    override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
+        super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
+        frame = NSRect(x: 0, y: 0, width: 14, height: 14)
+        canShowCallout = true
+        collisionMode = .none
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let path = NSBezierPath(ovalIn: bounds.insetBy(dx: 1.5, dy: 1.5))
+        dotColor.setFill()
+        path.fill()
+        NSColor.white.setStroke()
+        path.lineWidth = 1.5
+        path.stroke()
+    }
+}
+
 // MARK: - Networking
 
 func fetchJSON(urlString: String) -> [String: Any]? {
@@ -381,15 +412,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDeleg
             return view
         }
         if let repAnn = annotation as? RepeaterAnnotation {
-            let id = "repeater"
-            let view = mapView.dequeueReusableAnnotationView(withIdentifier: id) as? MKMarkerAnnotationView
-                ?? MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: id)
+            let id = "repeaterDot"
+            let view = mapView.dequeueReusableAnnotationView(withIdentifier: id) as? DotAnnotationView
+                ?? DotAnnotationView(annotation: annotation, reuseIdentifier: id)
             view.annotation = annotation
-            view.markerTintColor = statusColor(repAnn.status)
-            view.glyphImage = NSImage(systemSymbolName: "antenna.radiowaves.left.and.right", accessibilityDescription: nil)
-            view.canShowCallout = true
-            view.displayPriority = .required
-            view.collisionMode = .none
+            view.dotColor = statusColor(repAnn.status)
             return view
         }
         return nil
@@ -468,9 +495,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDeleg
         mapView.wantsLayer = true
         mapView.layer?.cornerRadius = 10
         mapView.layer?.masksToBounds = true
-
-        let mapClickGesture = NSClickGestureRecognizer(target: self, action: #selector(mapWasClicked(_:)))
-        mapView.addGestureRecognizer(mapClickGesture)
 
         refsStack = NSStackView(views: [])
         refsStack.orientation = .vertical
@@ -749,7 +773,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDeleg
 
             guard let coord = coord, !self.locationResolved else {
                 DispatchQueue.main.async {
-                    self.showMapFallback(reason: "Could not get your location automatically (no Wi-Fi/GPS fix, and IP-based lookup failed too). Click anywhere on the map below to set your position, or use \"Edit Location...\".")
+                    self.showMapFallback(reason: "Could not get your location automatically (no Wi-Fi/GPS fix, and IP-based lookup failed too). Use \"Edit Location...\" to enter a grid square or coordinates manually.")
                 }
                 return
             }
@@ -769,8 +793,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDeleg
     }
 
     /// Shown when automatic location detection fails entirely. Rather than a dead-end error,
-    /// this puts up the normal content view with an empty report and a clickable map
-    /// (centered on the last known position, if any) so the user can tap their location in directly.
+    /// this puts up the normal content view with an empty report and the map centered on the
+    /// last known position (if any), while "Edit Location..." is used to set one manually.
     func showMapFallback(reason: String) {
         spinner.stopAnimation(nil)
         loadingView.isHidden = true
@@ -791,37 +815,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDeleg
         let center = loadLastCoord() ?? CLLocationCoordinate2D(latitude: 54.5, longitude: -3.5)
         let span: CLLocationDistance = loadLastCoord() != nil ? 30000 : 900000
         mapView.setRegion(MKCoordinateRegion(center: center, latitudinalMeters: span, longitudinalMeters: span), animated: false)
-    }
-
-    @objc func mapWasClicked(_ gesture: NSClickGestureRecognizer) {
-        guard gesture.state == .ended else { return }
-        let point = gesture.location(in: mapView)
-
-        // Ask AppKit what's actually rendered at this pixel, rather than computing
-        // annotation screen positions ourselves. If a pin (or its callout) is there,
-        // let it handle the click instead of treating this as a "set location" tap.
-        if let superview = mapView.superview {
-            let pointInSuperview = mapView.convert(point, to: superview)
-            if let hitView = mapView.hitTest(pointInSuperview) {
-                var v: NSView? = hitView
-                while let cur = v, cur !== mapView {
-                    if cur is MKAnnotationView { return }
-                    v = cur.superview
-                }
-            }
-        }
-
-        let coord = mapView.convert(point, toCoordinateFrom: mapView)
-
-        locationManager.stopUpdatingLocation()
-        locationResolved = true
-
-        contentView.isHidden = true
-        loadingView.isHidden = false
-        statusLabel.stringValue = "Fetching grid.radio data..."
-        spinner.startAnimation(nil)
-
-        loadData(for: coord, sourceLabel: "Manual entry (map click)")
     }
 
     // MARK: Data loading
