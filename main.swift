@@ -71,43 +71,23 @@ struct RepeaterRow {
     let status: String
     let lat: Double
     let lon: Double
+    var pinColor: NSColor? = nil
 }
+
+// Distinct colors cycled across the pins shown on the map, matched to a swatch
+// in the repeater table so a pin can be identified by color instead of clicking it.
+let pinPalette: [NSColor] = [
+    .systemBlue, .systemPurple, .systemOrange, .systemTeal, .systemPink,
+    .systemIndigo, .systemBrown, .systemYellow, .systemMint, .systemCyan,
+    .systemRed, .systemGreen, .systemGray, .systemBlue.withAlphaComponent(0.6),
+    .systemPurple.withAlphaComponent(0.6),
+]
 
 final class UserAnnotation: MKPointAnnotation {}
 
 final class RepeaterAnnotation: MKPointAnnotation {
     var status: String = ""
-}
-
-/// A small flat dot marker, used instead of the tall balloon-style MKMarkerAnnotationView
-/// for repeaters. Balloon markers have real height above their anchor point, which is what
-/// buries a neighboring pin's callout when many repeaters are packed close together; a flat
-/// dot has almost no footprint, so that overlap is far less likely regardless of z-order.
-final class DotAnnotationView: MKAnnotationView {
-    var dotColor: NSColor = .systemGray {
-        didSet { needsDisplay = true }
-    }
-
-    override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
-        super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
-        frame = NSRect(x: 0, y: 0, width: 14, height: 14)
-        canShowCallout = true
-        collisionMode = .none
-        wantsLayer = true
-    }
-
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let path = NSBezierPath(ovalIn: bounds.insetBy(dx: 1.5, dy: 1.5))
-        dotColor.setFill()
-        path.fill()
-        NSColor.white.setStroke()
-        path.lineWidth = 1.5
-        path.stroke()
-    }
+    var pinColor: NSColor = .systemBlue
 }
 
 // MARK: - Networking
@@ -290,8 +270,17 @@ final class RepeaterTableSource: NSObject, NSTableViewDataSource, NSTableViewDel
             dot.layer?.cornerRadius = 4
             cell.addSubview(dot)
         case "callsign":
+            var textX: CGFloat = 4
+            if let pinColor = r.pinColor {
+                let swatch = NSView(frame: NSRect(x: 4, y: 6, width: 8, height: 8))
+                swatch.wantsLayer = true
+                swatch.layer?.backgroundColor = pinColor.cgColor
+                swatch.layer?.cornerRadius = 2
+                cell.addSubview(swatch)
+                textX = 16
+            }
             let l = makeLabel(r.callsign, size: 12, weight: .semibold)
-            l.frame = NSRect(x: 4, y: 1, width: (tableColumn?.width ?? 100) - 8, height: 18)
+            l.frame = NSRect(x: textX, y: 1, width: (tableColumn?.width ?? 100) - textX - 4, height: 18)
             cell.addSubview(l)
         case "location":
             let l = makeLabel(r.location, size: 12)
@@ -412,11 +401,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDeleg
             return view
         }
         if let repAnn = annotation as? RepeaterAnnotation {
-            let id = "repeaterDot"
-            let view = mapView.dequeueReusableAnnotationView(withIdentifier: id) as? DotAnnotationView
-                ?? DotAnnotationView(annotation: annotation, reuseIdentifier: id)
+            let id = "repeater"
+            let view = mapView.dequeueReusableAnnotationView(withIdentifier: id) as? MKMarkerAnnotationView
+                ?? MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: id)
             view.annotation = annotation
-            view.dotColor = statusColor(repAnn.status)
+            view.markerTintColor = repAnn.pinColor
+            view.glyphImage = NSImage(systemSymbolName: "antenna.radiowaves.left.and.right", accessibilityDescription: nil)
+            view.canShowCallout = false
+            view.displayPriority = .required
+            view.collisionMode = .none
             return view
         }
         return nil
@@ -891,6 +884,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDeleg
                     let d2 = CLLocation(latitude: $1.lat, longitude: $1.lon).distance(from: here)
                     return d1 < d2
                 }
+                for i in repeaterRows.indices {
+                    repeaterRows[i].pinColor = i < 15 ? pinPalette[i % pinPalette.count] : nil
+                }
             }
 
             DispatchQueue.main.async {
@@ -926,12 +922,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDeleg
         pin.subtitle = "You are here"
         mapView.addAnnotation(pin)
 
-        for r in repeaters {
+        // Cap map pins to the nearest 15 (repeaters is already distance-sorted) to reduce
+        // overlap between markers - the full list is always in the table below regardless.
+        for r in repeaters.prefix(15) {
             let ann = RepeaterAnnotation()
             ann.coordinate = CLLocationCoordinate2D(latitude: r.lat, longitude: r.lon)
             ann.title = r.callsign
             ann.subtitle = "\(r.location)  \(r.band)  \(r.modes)  [\(r.status)]"
             ann.status = r.status
+            ann.pinColor = r.pinColor ?? .systemBlue
             mapView.addAnnotation(ann)
         }
 
